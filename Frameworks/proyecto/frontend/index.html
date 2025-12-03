@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Control Escolar — Clases</title>
+    <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+    <button id="themeToggle" class="theme-toggle" aria-label="Alternar tema" title="Alternar tema">🌙</button>
+
+    <div class="container">
+        <header class="app-header">
+            <div class="header-left">
+                <h1>Control de Clases</h1>
+                <p class="subtitle">Interfaz para gestionar clases — FastAPI</p>
+            </div>
+            <div id="headerRight" class="header-right">
+                <!-- El panel de usuario se inyecta aquí por script.js -->
+            </div>
+        </header>
+
+        <main class="main-grid">
+            <aside class="sidebar">
+                <section id="accountCard" class="card form-account">
+                    <h2>🙂 Cuenta</h2>
+                    <form id="accountForm" class="form-vertical">
+                        <div class="input-group">
+                            <label for="userName">Usuario</label>
+                            <input type="text" id="userName" required placeholder="Nombre de usuario" />
+                        </div>
+                        <div class="input-group">
+                            <label for="userMail">Correo</label>
+                            <input type="email" id="userMail" required placeholder="Correo electrónico" />
+                        </div>
+                        <div class="input-group">
+                            <label for="userPassword">Contraseña</label>
+                            <input type="password" id="userPassword" required placeholder="Contraseña" />
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary">Iniciar / Registrar</button>
+                        </div>
+                    </form>
+                </section>
+
+                <section id="classCard" class="card form-section hidden">
+                    <h2>📚 Crear / Actualizar Clase</h2>
+                    <form id="productForm" class="form-vertical">
+                        <div class="input-group">
+                            <label for="itemId">ID</label>
+                            <input type="number" id="itemId" required min="1" placeholder="Identificador (ID)" />
+                        </div>
+                        <div class="input-group">
+                            <label for="itemName">Nombre de la clase</label>
+                            <input type="text" id="itemName" required placeholder="Nombre de la clase" />
+                        </div>
+
+                        <div class="input-group">
+                            <label for="itemPartial">Agregar parcial (nombre)</label>
+                            <input type="text" id="itemPartial" placeholder="Nombre del parcial (opcional)" />
+                            <small class="muted">Agrega un parcial y presiona "Agregar parcial"</small>
+                            <div style="margin-top:0.5rem;">
+                                <button type="button" id="addPartialBtn" class="btn btn-secondary btn-sm">Agregar parcial</button>
+                            </div>
+                            <ul id="partialsList" class="partials-list"></ul>
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary">Guardar clase</button>
+                        </div>
+                    </form>
+                </section>
+            </aside>
+
+            <section class="content">
+                <div id="searchCard" class="card search-section hidden">
+                    <h2>🔍 Buscar Clase</h2>
+                    <div class="search-controls">
+                        <input type="number" id="searchId" placeholder="ID" min="1" />
+                        <input type="text" id="searchQuery" placeholder="Nombre (Opcional)" />
+                        <div class="search-buttons">
+                            <button type="button" id="searchBtn" class="btn btn-secondary">Buscar</button>
+                            <button type="button" id="verTodosBtn" class="btn btn-info">Ver Mis Clases</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="resultsCard" class="card results-section hidden">
+                    <h2>📚 Clases</h2>
+                    <div id="results" class="results-container">
+                        <p class="placeholder">Carga inicial... inicia sesión y pulsa "Ver Mis Clases"</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="app-footer">
+            <small>Interfaz para gestionar clases — FastAPI - Alpha</small>
+        </footer>
+    </div>
+
+    <div id="modal" class="modal" aria-hidden="true">
+        <div class="modal-content">
+            <h3 id="modalTitle">Confirmar</h3>
+            <p id="modalMessage">¿Estás seguro?</p>
+            <div class="modal-buttons">
+                <button id="modalConfirm" class="btn btn-danger">Sí</button>
+                <button id="modalCancel" class="btn btn-secondary">Cancelar</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+    <script>
+        // Renderizar clases (sin is_offer en editProduct)
+        function displayProducts(products, title) {
+            let html = `<h3>${title}</h3><div class="products-grid">`;
+            products.forEach(product => {
+                const isOwner = currentUser && product.owner && (currentUser.username === product.owner || currentUser.is_admin);
+                const partialsHtml = (product.partials && product.partials.length) ? `<ul class="partials-list">${product.partials.map(p => `<li>${p.name || 'Parcial'}</li>`).join('')}</ul>` : '';
+                html += `
+                    <div class="product-card">
+                        <div class="product-header">
+                            <h4>${product.name}</h4>
+                            <span class="product-id">ID: ${product.item_id}</span>
+                        </div>
+                        <div class="product-owner">Propietario: ${product.owner || '—'}</div>
+                        ${partialsHtml}
+                        <div class="product-actions">
+                            ${isOwner ? `<button onclick="editProduct(${product.item_id}, '${escapeHtml(product.name)}', ${encodeURIComponent(JSON.stringify(product.partials || []))})" class="btn btn-sm btn-secondary">✏️ Editar</button>` : ''}
+                            ${isOwner ? `<button onclick="deleteProduct(${product.item_id})" class="btn btn-sm btn-danger">🗑️ Eliminar</button>` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            resultsContainer.innerHTML = html;
+        }
+    </script>
+</body>
+</html>

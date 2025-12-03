@@ -1,0 +1,7 @@
+# Dependencias del proyecto AutocobroApp
+# Instalar con: uv pip install -r requirements.txt
+
+fastapi==0.115.4      # Framework web moderno y rápido
+uvicorn[standard]==0.32.0  # Servidor ASGI para ejecutar FastAPI
+pydantic==2.9.2       # Validación de datos (incluido con FastAPI)
+python-dotenv==1.0.0  # Cargar variables desde archivo .env en desarrollo
