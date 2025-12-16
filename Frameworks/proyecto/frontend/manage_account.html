@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Gestionar Cuenta — Control Escolar</title>
+    <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+    <div class="top-bar">
+        <button onclick="goBack()" class="btn btn-secondary" style="background: transparent; border: 1px solid rgba(0,0,0,0.08); color: var(--text);">← Volver</button>
+        <button id="themeToggle" class="theme-toggle" aria-label="Alternar tema" title="Alternar tema">🌙</button>
+    </div>
+
+    <div class="container">
+        <header class="app-header">
+            <h1>Gestionar Cuenta</h1>
+            <p class="subtitle">Edita tu información personal</p>
+        </header>
+
+        <main class="manage-account-grid">
+            <section class="profile-display">
+                <h2>Perfil Actual</h2>
+                <div class="profile-card">
+                    <div class="profile-avatar">
+                        <img id="profileImage" src="" alt="Foto de perfil" style="width: 150px; height: 150px; border-radius: 50%; object-fit: cover; border: 2px solid var(--border);" />
+                    </div>
+                    <div class="profile-info">
+                        <h3 id="displayName">Nombre</h3>
+                        <p id="displayEmail">Correo</p>
+                        <div id="displayRole" class="role-badge">Usuario</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="profile-edit">
+                <h2>Editar Información</h2>
+                <form id="editForm" class="form-vertical">
+                    <div class="input-group">
+                        <label for="profilePhoto">Foto de perfil</label>
+                        <label for="profilePhoto" class="btn btn-secondary" style="cursor: pointer;">Seleccionar Foto</label>
+                        <input type="file" id="profilePhoto" accept="image/*" style="display: none;" />
+                        <small>Selecciona una imagen (se guardará localmente)</small>
+                    </div>
+                    <div class="input-group">
+                        <label for="editUsername">Nombre de usuario</label>
+                        <input type="text" id="editUsername" required />
+                    </div>
+                    <div class="input-group">
+                        <label for="editEmail">Correo electrónico</label>
+                        <input type="email" id="editEmail" required />
+                    </div>
+                    <div class="input-group">
+                        <label for="editPassword">Nueva contraseña (opcional)</label>
+                        <input type="password" id="editPassword" placeholder="Dejar vacío para no cambiar" />
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">💾 Guardar cambios</button>
+                        <button type="button" id="deleteAccountBtn" class="btn btn-danger">🗑️ Borrar cuenta</button>
+                    </div>
+                </form>
+            </section>
+        </main>
+    </div>
+
+    <!-- Pantalla de carga -->
+    <div id="loadingOverlay" class="loading-overlay hidden">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <p>Cargando...</p>
+        </div>
+    </div>
+
+    <script src="Scripts/utils.js"></script>
+    <script src="Scripts/manage_account.js"></script>
+</body>
+</html></content>
+<parameter name="filePath">d:\code\Etc\Frameworks\proyecto\frontend\manage_account.html

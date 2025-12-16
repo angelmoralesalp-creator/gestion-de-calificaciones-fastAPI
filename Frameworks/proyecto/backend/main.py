@@ -3,15 +3,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr
 from typing import Dict, Optional, List, Any
 import os
-import hashlib
-import hmac
-import secrets
-import base64
 import json
+import secrets
+import hashlib
+import base64
+import hmac
 import shutil
+import uuid
+from dotenv import load_dotenv
 
 # Cargar variables
-from dotenv import load_dotenv
 load_dotenv()
 
 # Directorio donde se guardarán las "Clases" por usuario
@@ -25,66 +26,56 @@ os.makedirs(DUMP_DIR, exist_ok=True)
 
 app = FastAPI(
     title="Test Server",
-    description="Gestor de calificaciones (Clases)",
-    version="1.0.0"
+    description="Gestor de calificaciones",
+    version="alpha"
 )
 
-# Leer ALLOWED_ORIGINS desde variables de entorno. Puede ser:
-# - Una cadena '*' para permitir todos los orígenes
-# - Una lista separada por comas: 'http://127.0.0.1:5500,http://localhost:3000'
+# Leer ALLOWED_ORIGINS desde variables de entorno y configurar CORS.
 allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "*")
 if allowed_origins_env.strip() == "*":
     allow_origins = ["*"]
 else:
-    # Separar por comas y eliminar espacios en blanco
     allow_origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
+
+# En desarrollo, asegurar que Live Server esté permitido
+dev_live_origin = "http://127.0.0.1:5500"
+dev_live_origin_alt = "http://localhost:5500"
+if allow_origins != ["*"]:
+    if dev_live_origin not in allow_origins:
+        allow_origins.append(dev_live_origin)
+    if dev_live_origin_alt not in allow_origins:
+        allow_origins.append(dev_live_origin_alt)
+
+# Si `allow_origins` contiene '*', no podemos usar credentials true de forma segura.
+allow_credentials_flag = False if allow_origins == ["*"] else True
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
-    allow_credentials=True,
+    allow_credentials=allow_credentials_flag,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+print(f"CORS allow_origins={allow_origins}, allow_credentials={allow_credentials_flag}")
 
 # ============================================================================
 # MODELOS DE DATOS (usando Pydantic)
 # ============================================================================
 
 class Product(BaseModel):
-    # "Clase": name obligatorio, price opcional (no requerido); parciales lista opcional
     name: str = Field(..., min_length=1, description="Nombre de la clase")
-    price: float = Field(default=0.0, description="Precio / costo asociado a la clase (opcional)")
+    price: float = Field(default=0.0, description="Precio / costo asociado a la clase")
     is_offer: bool = Field(default=False, description="Indica si la clase está en oferta")
-    partials: List[Dict[str, Any]] = Field(default_factory=list, description="Lista de parciales (ej: [{\"name\":\"Parcial 1\",\"max\":100}])")
-    
-    class Config:
-        json_schema_extra = {
-            "user": {
-                "name": "Administrador",
-                "email": "elian.hernandez.alp@cbtis258.edu.mx",
-                "password": "0j0c0nlos0j0s",
-                "is_admin": True
-            }
-        }
-
+    partials: List[Dict[str, Any]] = Field(default_factory=list, description="Lista de parciales")
 
 class ProductResponse(Product):
-    """
-    Respuesta para una Clase. Incluye item_id y owner (usuario propietario).
-    """
     item_id: int = Field(..., description="ID único de la clase")
     owner: str = Field(..., description="Usuario propietario (username)")
 
-
 class ProductsListResponse(BaseModel):
-    """
-    Lista de clases.
-    """
     total: int = Field(..., description="Cantidad total de clases")
     items: List[ProductResponse] = Field(..., description="Lista de clases")
-
 
 # ============================================================================
 # MODELOS Y LÓGICA DE AUTENTICACIÓN
@@ -93,45 +84,39 @@ class ProductsListResponse(BaseModel):
 class UserBase(BaseModel):
     username: str = Field(..., min_length=3, description="Nombre de usuario")
     email: EmailStr = Field(..., description="Correo electrónico")
-
+    profile_image: Optional[str] = Field(default=None, description="Imagen de perfil en base64")
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=6, description="Contraseña")
 
-
 class UserResponse(UserBase):
     is_admin: bool = Field(default=False)
 
-
 class LoginRequest(BaseModel):
-    username_or_email: str = Field(..., description="Usuario o correo")
+    email: EmailStr = Field(..., description="Correo electrónico")
     password: str = Field(..., description="Contraseña")
-
 
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserResponse
 
-
 class UserUpdate(BaseModel):
     username: Optional[str] = Field(None, min_length=3)
     password: Optional[str] = Field(None, min_length=6)
+    profile_image: Optional[str] = Field(default=None, description="Imagen de perfil en base64")
 
-
-# Almacenamiento en memoria para usuarios y sesiones
-# users_store: username -> dict with keys: username, email, password_hash (salt$hash), is_admin
-users_store: Dict[str, Dict] = {}
-# email -> username
-email_index: Dict[str, str] = {}
-# token -> username
-sessions: Dict[str, str] = {}
-
-# Almacenamiento en memoria para clases
-# item_id (int) -> ProductResponse
+# Almacenamiento en memoria
+users_store: Dict[str, Dict] = {}  # Por user_id
+email_index: Dict[str, str] = {}  # Email -> user_id
+username_index: Dict[str, str] = {}  # Username -> user_id
+sessions: Dict[str, str] = {}  # Token -> user_id
 products_db: Dict[int, ProductResponse] = {}
 
-# Helpers para hash de contraseñas
+# ============================================================================
+# FUNCIONES DE HASH Y AUTENTICACIÓN
+# ============================================================================
+
 def _hash_password(password: str, salt: Optional[str] = None) -> str:
     if salt is None:
         salt = secrets.token_hex(16)
@@ -145,64 +130,82 @@ def _verify_password(stored: str, provided_password: str) -> bool:
     except ValueError:
         return False
     provided_hashed = _hash_password(provided_password, salt).split('$', 1)[1]
-    # use hmac.compare_digest for timing-attack safe comparison
     return hmac.compare_digest(provided_hashed, hashed)
 
 def create_user(user: UserCreate, is_admin: bool = False) -> UserResponse:
     username = user.username.lower()
     email = user.email.lower()
-    if username in users_store:
-        raise HTTPException(status_code=400, detail="El nombre de usuario ya existe")
+    
+    # Verificar que el correo no existe
     if email in email_index:
-        raise HTTPException(status_code=400, detail="El correo ya está registrado")
+        raise HTTPException(status_code=400, detail="Correo ya registrado")
+    
+    # Verificar que el nombre de usuario no existe
+    if username in username_index:
+        raise HTTPException(status_code=400, detail="Nombre de usuario ya existe")
 
+    # Generar UUID único para el usuario
+    user_id = str(uuid.uuid4())
+    
     password_hash = _hash_password(user.password)
-    users_store[username] = {
+    user_record = {
+        "user_id": user_id,
         "username": username,
         "email": email,
         "password_hash": password_hash,
         "is_admin": is_admin
     }
-    email_index[email] = username
-    # crear carpeta de usuario vacía
-    os.makedirs(os.path.join(DUMP_DIR, username), exist_ok=True)
+    
+    # Guardar en índices por user_id
+    users_store[user_id] = user_record
+    email_index[email] = user_id
+    username_index[username] = user_id
+    
+    # Crear carpeta con user_id y guardar metadatos
+    user_dir = os.path.join(DUMP_DIR, user_id)
+    os.makedirs(user_dir, exist_ok=True)
+    user_meta_path = os.path.join(user_dir, "user_meta.json")
+    with open(user_meta_path, "w", encoding="utf-8") as f:
+        json.dump(user_record, f, ensure_ascii=False, indent=2)
+    
     return UserResponse(username=username, email=email, is_admin=is_admin)
 
-def authenticate_user(username_or_email: str, password: str) -> Optional[Dict]:
-    key = username_or_email.lower()
-    user = None
-    if key in users_store:
-        user = users_store[key]
-    elif key in email_index:
-        username = email_index[key]
-        user = users_store.get(username)
-    if not user:
+def authenticate_user(email: str, password: str) -> Optional[Dict]:
+    """Autentica un usuario usando email y contraseña."""
+    email_key = email.lower()
+    user_id = email_index.get(email_key)
+    
+    if not user_id or user_id not in users_store:
         return None
+    
+    user = users_store[user_id]
     if not _verify_password(user["password_hash"], password):
         return None
+    
     return user
 
-def create_session_for_user(username: str) -> str:
+def create_session_for_user(user_id: str) -> str:
     token = secrets.token_urlsafe(32)
-    sessions[token] = username
+    sessions[token] = user_id
     return token
 
 def get_user_by_token(token: str) -> Optional[Dict]:
-    username = sessions.get(token)
-    if not username:
+    if token and token.startswith("Bearer "):
+        token = token[7:]
+    user_id = sessions.get(token)
+    if not user_id:
         return None
-    return users_store.get(username)
-
+    return users_store.get(user_id)
 
 # ============================================================================
-# FUNCIONES DE PERSISTENCIA: Guardado en DumpData por usuario (carpetas)
+# FUNCIONES DE PERSISTENCIA
 # ============================================================================
 
-def _class_path(username: str, item_id: int) -> str:
-    return os.path.join(DUMP_DIR, username, str(item_id))
+def _class_path(user_id: str, item_id: int) -> str:
+    return os.path.join(DUMP_DIR, user_id, str(item_id))
 
-def persist_class_to_disk(owner: str, item_id: int, data: Dict):
-    path = _class_path(owner, item_id)
+def persist_class_to_disk(user_id: str, item_id: int, data: Dict):
+    path = _class_path(user_id, item_id)
     os.makedirs(path, exist_ok=True)
     meta_path = os.path.join(path, "meta.json")
     with open(meta_path, "w", encoding="utf-8") as f:
@@ -212,387 +215,480 @@ def persist_class_to_disk(owner: str, item_id: int, data: Dict):
             "price": data.get("price", 0.0),
             "is_offer": data.get("is_offer", False),
             "partials": data.get("partials", []),
-            "owner": owner
+            "owner": data.get("owner")
         }, f, ensure_ascii=False, indent=2)
+    # Además de meta.json, volcar cada parcial en archivos separados
+    try:
+        partials = data.get("partials", []) or []
+        partials_dir = os.path.join(path, "partials")
+        # Limpiar/crear carpeta de parciales
+        if os.path.isdir(partials_dir):
+            # eliminar archivos antiguos que no estén en la lista actual
+            existing = set(os.listdir(partials_dir))
+        else:
+            os.makedirs(partials_dir, exist_ok=True)
+            existing = set()
 
-def remove_class_from_disk(owner: str, item_id: int):
-    path = _class_path(owner, item_id)
+        written = set()
+        def _safe_filename(name: str) -> str:
+            # Simple sanitizer para nombres de archivo
+            safe = name.replace(os.sep, "_").strip()
+            safe = safe.replace(" ", "_")
+            # eliminar caracteres no alfanuméricos básicos
+            safe = ''.join(c for c in safe if (c.isalnum() or c in ('_', '-')))
+            if not safe:
+                safe = f"partial_{secrets.token_hex(4)}"
+            return safe
+
+        for p in partials:
+            pname = str(p.get("name") or p.get("id") or "partial")
+            fname = _safe_filename(pname) + ".json"
+            ppath = os.path.join(partials_dir, fname)
+            try:
+                with open(ppath, "w", encoding="utf-8") as pf:
+                    json.dump(p, pf, ensure_ascii=False, indent=2)
+                written.add(fname)
+            except Exception:
+                # si no se puede escribir un parcial concreto, continuar
+                continue
+
+        # eliminar archivos obsoletos
+        for leftover in existing - written:
+            try:
+                os.remove(os.path.join(partials_dir, leftover))
+            except Exception:
+                pass
+    except Exception as e:
+        # No queremos que un fallo en el volcado de parciales impida que la API funcione
+        print(f"Advertencia: error guardando parciales en disco: {e}")
+
+def remove_class_from_disk(user_id: str, item_id: int):
+    """Elimina una clase específica del disco."""
+    path = _class_path(user_id, item_id)
     if os.path.isdir(path):
         shutil.rmtree(path)
 
 def load_dumpdata_into_memory():
-    """
-    Carga las clases existentes en DumpData al iniciar el servidor.
-    Formato esperado: DumpData/<username>/<item_id>/meta.json
-    """
+    """Carga clases y usuarios existentes al iniciar."""
     products_db.clear()
+    users_store.clear()
+    email_index.clear()
+    username_index.clear()
+    
     if not os.path.isdir(DUMP_DIR):
         return
-    for username in os.listdir(DUMP_DIR):
-        user_dir = os.path.join(DUMP_DIR, username)
-        if not os.path.isdir(user_dir):
+    
+    # Cargar usuarios (cada directorio es un user_id)
+    for user_id_dir in os.listdir(DUMP_DIR):
+        user_path = os.path.join(DUMP_DIR, user_id_dir)
+        if not os.path.isdir(user_path):
             continue
-        for item_name in os.listdir(user_dir):
-            item_dir = os.path.join(user_dir, item_name)
-            if not os.path.isdir(item_dir):
+        
+        user_meta_path = os.path.join(user_path, "user_meta.json")
+        if os.path.isfile(user_meta_path):
+            try:
+                with open(user_meta_path, "r", encoding="utf-8") as f:
+                    user_data = json.load(f)
+                
+                # Usar el user_id del archivo o el nombre del directorio
+                user_id = user_data.get("user_id") or user_id_dir
+                
+                # Asegurar que user_id está en el diccionario
+                if "user_id" not in user_data:
+                    user_data["user_id"] = user_id
+                
+                users_store[user_id] = user_data
+                email_index[user_data["email"].lower()] = user_id
+                username_index[user_data["username"].lower()] = user_id
+            except (json.JSONDecodeError, KeyError) as e:
+                print(f"Error cargando usuario de {user_id_dir}: {e}")
                 continue
-            meta_path = os.path.join(item_dir, "meta.json")
-            if not os.path.isfile(meta_path):
+        
+        # Cargar clases del usuario
+        for item_id_str in os.listdir(user_path):
+            if item_id_str == "user_meta.json":
                 continue
             try:
-                with open(meta_path, "r", encoding="utf-8") as f:
-                    meta = json.load(f)
-                item_id = int(meta.get("item_id", item_name))
-                prod = ProductResponse(
-                    item_id=item_id,
-                    name=meta.get("name", "Sin nombre"),
-                    price=float(meta.get("price", 0)),
-                    is_offer=bool(meta.get("is_offer", False)),
-                    partials=meta.get("partials", []),
-                    owner=meta.get("owner", username)
-                )
-                products_db[item_id] = prod
-            except Exception:
-                # ignorar entradas corruptas
+                item_id = int(item_id_str)
+                meta_path = os.path.join(user_path, item_id_str, "meta.json")
+                if os.path.isfile(meta_path):
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    products_db[item_id] = ProductResponse(**data)
+            except (ValueError, json.JSONDecodeError, KeyError) as e:
+                print(f"Error cargando clase {item_id_str}: {e}")
                 continue
 
 # Cargar al inicio
 load_dumpdata_into_memory()
 
 # ============================================================================
-# ENDPOINTS DE LA API
+# ENDPOINTS: ITEMS (CLASES)
 # ============================================================================
 
 @app.get("/")
 async def root():
-    """
-    Endpoint raíz que da la bienvenida.
-    Útil para verificar que el servidor está corriendo.
-    """
-    return {
-        "message": "Bienvenido al Test Server de Gestión de Clases",
-        "version": "1.0.0",
-        "docs": "/docs"
-    }
-
+    return {"message": "API de Clases - FastAPI"}
 
 @app.get("/items/", response_model=ProductsListResponse)
 async def get_all_products(authorization: Optional[str] = Header(None)):
-    """
-    Obtiene las clases visibles para el usuario:
-    - Si no hay Authorization: devuelve lista vacía (front-end debe ocultar menú).
-    - Si user es admin: devuelve todas.
-    - Si user no es admin: devuelve solo sus clases.
-    """
-    if not authorization:
-        return ProductsListResponse(total=0, items=[])
-    try:
-        scheme, token = authorization.split()
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Formato de Authorization inválido")
-    if scheme.lower() != "bearer":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Se requiere esquema Bearer")
-    user = get_user_by_token(token)
+    user = get_user_by_token(authorization)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido o expirado")
-    username = user["username"]
-    is_admin = user.get("is_admin", False)
-
-    if is_admin:
-        items_list = list(products_db.values())
-    else:
-        items_list = [p for p in products_db.values() if p.owner == username]
-    return ProductsListResponse(total=len(items_list), items=items_list)
-
+        raise HTTPException(status_code=401, detail="No autorizado")
+    
+    user_items = [p for p in products_db.values() if p.owner == user["username"]]
+    return ProductsListResponse(total=len(user_items), items=user_items)
 
 @app.get("/items/{item_id}", response_model=ProductResponse)
 async def get_product(
     item_id: int,
     authorization: Optional[str] = Header(None),
-    q: Optional[str] = Query(None, description="Parámetro de búsqueda opcional (no usado actualmente)")
+    q: Optional[str] = Query(None)
 ):
-    """
-    Obtiene una clase específica por su ID.
-    Solo el propietario o admin puede verla.
-    """
-    if item_id not in products_db:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Clase con ID {item_id} no encontrada"
-        )
-
-    if not authorization:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Falta cabecera Authorization")
-    try:
-        scheme, token = authorization.split()
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Formato de Authorization inválido")
-    if scheme.lower() != "bearer":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Se requiere esquema Bearer")
-    user = get_user_by_token(token)
+    user = get_user_by_token(authorization)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido o expirado")
-    username = user["username"]
-    is_admin = user.get("is_admin", False)
-
-    existing = products_db[item_id]
-    if not is_admin and existing.owner != username:
-        raise HTTPException(status_code=403, detail="No tiene permiso para ver esta clase")
-
-    return existing
-
+        raise HTTPException(status_code=401, detail="No autorizado")
+    
+    if item_id not in products_db:
+        raise HTTPException(status_code=404, detail="Clase no encontrada")
+    
+    product = products_db[item_id]
+    if product.owner != user["username"]:
+        raise HTTPException(status_code=403, detail="No tienes acceso a esta clase")
+    
+    return product
 
 @app.put("/items/{item_id}", response_model=ProductResponse)
-async def create_or_update_product(item_id: int, product: Product, authorization: Optional[str] = Header(None)):
-    """
-    Crea o actualiza una Clase. Los datos se guardan en DumpData/<username>/<item_id>/meta.json.
-    Requiere autenticación (cabecera Authorization: Bearer <token>).
-    """
-    if not authorization:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Falta cabecera Authorization")
-    try:
-        scheme, token = authorization.split()
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Formato de Authorization inválido")
-    if scheme.lower() != "bearer":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Se requiere esquema Bearer")
-    user = get_user_by_token(token)
+async def create_or_update_product(
+    item_id: int,
+    product: Product,
+    authorization: Optional[str] = Header(None)
+):
+    user = get_user_by_token(authorization)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido o expirado")
-    username = user["username"]
-
-    # Si la clase ya existe y pertenece a otro usuario, prohibir la sobreescritura
-    existing = products_db.get(item_id)
-    if existing and existing.owner != username and not user.get("is_admin", False):
-        raise HTTPException(status_code=403, detail="La clase ya existe y pertenece a otro usuario")
-
-    # Guardar en disco bajo DumpData/<username>/<item_id>
-    persist_class_to_disk(username, item_id, product.dict())
-
-    # Actualizar memoria
-    prod_resp = ProductResponse(
+        raise HTTPException(status_code=401, detail="No autorizado")
+    
+    response = ProductResponse(
         item_id=item_id,
         name=product.name,
         price=product.price,
         is_offer=product.is_offer,
         partials=product.partials,
-        owner=username
+        owner=user["username"]
     )
-    products_db[item_id] = prod_resp
-
-    return prod_resp
-
+    products_db[item_id] = response
+    persist_class_to_disk(user["user_id"], item_id, response.dict())
+    return response
 
 @app.delete("/items/{item_id}")
-async def delete_product(item_id: int, authorization: Optional[str] = Header(None)):
+async def delete_product(item_id: int):
     """
-    Elimina una clase por su ID. Solo el propietario o admin puede eliminarla.
+    Eliminación simple (compatible con 'servidor funcional').
+    No requiere autenticación: elimina la clase del diccionario en memoria.
     """
     if item_id not in products_db:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Clase con ID {item_id} no encontrada"
-        )
+        raise HTTPException(status_code=404, detail=f"Clase con ID {item_id} no encontrada")
 
-    if not authorization:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Falta cabecera Authorization")
+    # Eliminar y devolver confirmación
+    deleted = products_db.pop(item_id)
+    # Intentar eliminar en disco si existe la estructura (no crítico)
     try:
-        scheme, token = authorization.split()
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Formato de Authorization inválido")
-    if scheme.lower() != "bearer":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Se requiere esquema Bearer")
-    user = get_user_by_token(token)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido o expirado")
-    username = user["username"]
-    is_admin = user.get("is_admin", False)
+        # Si no hay owner/estructura en el registro, skip
+        owner = getattr(deleted, 'owner', None)
+        if owner:
+            # Buscar user_id en users_store por username (si existe)
+            user_id = None
+            for uid, u in users_store.items():
+                if u.get('username') == owner:
+                    user_id = uid
+                    break
+            if user_id:
+                try:
+                    remove_class_from_disk(user_id, item_id)
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
-    existing = products_db[item_id]
-    if not is_admin and existing.owner != username:
-        raise HTTPException(status_code=403, detail="Solo el propietario o admin puede eliminar esta clase")
-
-    # Remover del disco y de memoria
-    remove_class_from_disk(existing.owner, item_id)
-    products_db.pop(item_id, None)
-
-    return {
-        "message": f"Clase '{existing.name}' eliminada exitosamente",
-        "item_id": item_id
-    }
-
+    return {"message": f"Clase '{deleted.name}' eliminada", "item_id": item_id}
 
 # ============================================================================
-# ENDPOINTS DE AUTENTICACIÓN
+# ENDPOINTS: PARCIALES
+# ============================================================================
+
+@app.post("/items/{item_id}/partials")
+async def add_partial(
+    item_id: int,
+    partial: Dict[str, Any],
+    authorization: Optional[str] = Header(None)
+):
+    user = get_user_by_token(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="No autorizado")
+    
+    if item_id not in products_db:
+        raise HTTPException(status_code=404, detail="Clase no encontrada")
+    
+    product = products_db[item_id]
+    if product.owner != user["username"]:
+        raise HTTPException(status_code=403, detail="No tienes acceso a esta clase")
+    
+    partial_name = partial.get("name")
+    if not partial_name:
+        raise HTTPException(status_code=400, detail="El parcial debe tener un nombre")
+    
+    existing_idx = next((i for i, p in enumerate(product.partials) if p.get("name") == partial_name), None)
+    if existing_idx is not None:
+        product.partials[existing_idx].update(partial)
+    else:
+        product.partials.append(partial)
+    
+    persist_class_to_disk(user["user_id"], item_id, product.dict())
+    return {"message": "Parcial guardado", "partial": partial}
+
+@app.delete("/items/{item_id}/partials/{partial_name}")
+async def delete_partial(
+    item_id: int,
+    partial_name: str,
+    authorization: Optional[str] = Header(None)
+):
+    user = get_user_by_token(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="No autorizado")
+    
+    if item_id not in products_db:
+        raise HTTPException(status_code=404, detail="Clase no encontrada")
+    
+    product = products_db[item_id]
+    if product.owner != user["username"]:
+        raise HTTPException(status_code=403, detail="No tienes acceso a esta clase")
+    
+    product.partials = [p for p in product.partials if p.get("name") != partial_name]
+    persist_class_to_disk(user["user_id"], item_id, product.dict())
+    return {"message": "Parcial eliminado"}
+
+# ============================================================================
+# ENDPOINTS: ACTIVIDADES
+# ============================================================================
+
+@app.post("/items/{item_id}/partials/{partial_name}/activities")
+async def add_activity(
+    item_id: int,
+    partial_name: str,
+    activity: Dict[str, Any],
+    authorization: Optional[str] = Header(None)
+):
+    user = get_user_by_token(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="No autorizado")
+    
+    if item_id not in products_db:
+        raise HTTPException(status_code=404, detail="Clase no encontrada")
+    
+    product = products_db[item_id]
+    if product.owner != user["username"]:
+        raise HTTPException(status_code=403, detail="No tienes acceso a esta clase")
+    
+    partial = next((p for p in product.partials if p.get("name") == partial_name), None)
+    if not partial:
+        raise HTTPException(status_code=404, detail="Parcial no encontrado")
+    
+    if "activities" not in partial:
+        partial["activities"] = []
+    
+    activity_id = len(partial["activities"])
+    activity_copy = activity.copy()
+    activity_copy["id"] = activity_id
+    partial["activities"].append(activity_copy)
+    
+    persist_class_to_disk(user["user_id"], item_id, product.dict())
+    return {"id": activity_id, "activity": activity_copy}
+
+@app.delete("/items/{item_id}/partials/{partial_name}/activities/{activity_idx}")
+async def delete_activity(
+    item_id: int,
+    partial_name: str,
+    activity_idx: int,
+    authorization: Optional[str] = Header(None)
+):
+    user = get_user_by_token(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="No autorizado")
+    
+    if item_id not in products_db:
+        raise HTTPException(status_code=404, detail="Clase no encontrada")
+    
+    product = products_db[item_id]
+    if product.owner != user["username"]:
+        raise HTTPException(status_code=403, detail="No tienes acceso a esta clase")
+    
+    partial = next((p for p in product.partials if p.get("name") == partial_name), None)
+    if not partial:
+        raise HTTPException(status_code=404, detail="Parcial no encontrado")
+    
+    if "activities" not in partial or activity_idx >= len(partial["activities"]):
+        raise HTTPException(status_code=404, detail="Actividad no encontrada")
+    
+    partial["activities"].pop(activity_idx)
+    persist_class_to_disk(user["user_id"], item_id, product.dict())
+    return {"message": "Actividad eliminada"}
+
+# ============================================================================
+# ENDPOINTS: AUTENTICACIÓN
 # ============================================================================
 
 @app.post("/auth/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(user: UserCreate):
-    """
-    Registrar una nueva cuenta y crear sesión automáticamente.
-    Devuelve TokenResponse (access_token + user).
-    """
-    created = create_user(user)
-    token = create_session_for_user(created.username)
-    user_resp = UserResponse(username=created.username, email=created.email, is_admin=created.is_admin)
-    return TokenResponse(access_token=token, token_type="bearer", user=user_resp)
+    user_response = create_user(user)
+    user_id = username_index[user.username.lower()]
+    token = create_session_for_user(user_id)
+    return TokenResponse(access_token=token, user=user_response)
 
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(credentials: LoginRequest):
-    """
-    Iniciar sesión con usuario o email y contraseña.
-    Devuelve un token simple (sesión en memoria).
-    """
-    user = authenticate_user(credentials.username_or_email, credentials.password)
+    user = authenticate_user(credentials.email, credentials.password)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas")
-    token = create_session_for_user(user["username"])
-    user_resp = UserResponse(username=user["username"], email=user["email"], is_admin=user.get("is_admin", False))
-    return TokenResponse(access_token=token, token_type="bearer", user=user_resp)
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
+    token = create_session_for_user(user["user_id"])
+    return TokenResponse(
+        access_token=token,
+        user=UserResponse(username=user["username"], email=user["email"], is_admin=user["is_admin"])
+    )
 
 @app.get("/auth/check/{username}")
 async def check_username(username: str):
-    """
-    Verifica si un nombre de usuario existe.
-    """
-    exists = username.lower() in users_store
+    exists = username.lower() in username_index
     return {"username": username, "exists": exists}
 
 @app.get("/auth/me", response_model=UserResponse)
 async def me(authorization: Optional[str] = Header(None)):
-    """
-    Obtener datos del usuario actual a partir del token Bearer.
-    """
-    if not authorization:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Falta cabecera Authorization")
-    try:
-        scheme, token = authorization.split()
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Formato de Authorization inválido")
-    if scheme.lower() != "bearer":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Se requiere esquema Bearer")
-    user = get_user_by_token(token)
+    user = get_user_by_token(authorization)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido o expirado")
-    return UserResponse(username=user["username"], email=user["email"], is_admin=user.get("is_admin", False))
-
+        raise HTTPException(status_code=401, detail="No autorizado")
+    return UserResponse(username=user["username"], email=user["email"], is_admin=user["is_admin"], profile_image=user.get("profile_image"))
 
 @app.patch("/auth/me", response_model=UserResponse)
 async def update_account(update: UserUpdate, authorization: Optional[str] = Header(None)):
-    """
-    Editar cuenta: cambiar username y/o contraseña.
-    Si cambia username se renombra la carpeta en DumpData y se actualizan índices.
-    """
-    if not authorization:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Falta cabecera Authorization")
-    try:
-        scheme, token = authorization.split()
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Formato de Authorization inválido")
-    if scheme.lower() != "bearer":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Se requiere esquema Bearer")
-    user = get_user_by_token(token)
+    user = get_user_by_token(authorization)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido o expirado")
-
-    username = user["username"]
+        raise HTTPException(status_code=401, detail="No autorizado")
+    
+    user_id = user["user_id"]
+    
     if update.username:
         new_username = update.username.lower()
-        if new_username != username and new_username in users_store:
-            raise HTTPException(status_code=400, detail="El nuevo nombre de usuario ya existe")
-        # actualizar users_store key
-        data = users_store.pop(username)
-        data["username"] = new_username
-        users_store[new_username] = data
-        # actualizar email_index (email stays same)
-        email_index[data["email"]] = new_username
-        # mover carpeta DumpData
-        old_dir = os.path.join(DUMP_DIR, username)
-        new_dir = os.path.join(DUMP_DIR, new_username)
-        if os.path.isdir(old_dir):
-            os.makedirs(os.path.dirname(new_dir), exist_ok=True)
-            try:
-                os.rename(old_dir, new_dir)
-            except Exception:
-                # fallback: copy & remove
-                shutil.copytree(old_dir, new_dir)
-                shutil.rmtree(old_dir)
-        # actualizar producto owners en memoria
-        for pid, prod in list(products_db.items()):
-            if prod.owner == username:
-                prod.owner = new_username
-                # actualizar meta.json owner si existe
-                meta_path = os.path.join(DUMP_DIR, new_username, str(pid), "meta.json")
-                if os.path.isfile(meta_path):
-                    try:
-                        with open(meta_path, "r+", encoding="utf-8") as f:
-                            meta = json.load(f)
-                            meta["owner"] = new_username
-                            f.seek(0); f.truncate()
-                            json.dump(meta, f, ensure_ascii=False, indent=2)
-                    except Exception:
-                        pass
-        # actualizar sesiones que apuntan al username
-        for t, u in list(sessions.items()):
-            if u == username:
-                sessions[t] = new_username
-        username = new_username
-        user = users_store[username]
-
+        old_username = user["username"].lower()
+        
+        if new_username != old_username and new_username in username_index:
+            raise HTTPException(status_code=400, detail="Nombre de usuario ya existe")
+        
+        # Actualizar índice de nombres de usuario
+        if old_username in username_index:
+            del username_index[old_username]
+        username_index[new_username] = user_id
+        user["username"] = new_username
+    
     if update.password:
-        users_store[username]["password_hash"] = _hash_password(update.password)
-
-    return UserResponse(username=username, email=users_store[username]["email"], is_admin=users_store[username].get("is_admin", False))
-
+        user["password_hash"] = _hash_password(update.password)
+    
+    if update.profile_image is not None:
+        user["profile_image"] = update.profile_image
+    
+    # Guardar metadatos actualizados
+    user_meta_path = os.path.join(DUMP_DIR, user_id, "user_meta.json")
+    with open(user_meta_path, "w", encoding="utf-8") as f:
+        json.dump(user, f, ensure_ascii=False, indent=2)
+    
+    return UserResponse(username=user["username"], email=user["email"], is_admin=user["is_admin"], profile_image=user.get("profile_image"))
 
 @app.delete("/auth/me")
 async def delete_account(authorization: Optional[str] = Header(None)):
-    """
-    Borrar la cuenta autenticada: elimina usuario, sesiones y DumpData/<username>.
-    """
-    if not authorization:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Falta cabecera Authorization")
-    try:
-        scheme, token = authorization.split()
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Formato de Authorization inválido")
-    if scheme.lower() != "bearer":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Se requiere esquema Bearer")
-    user = get_user_by_token(token)
+    user = get_user_by_token(authorization)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido o expirado")
-
-    username = user["username"]
-    # eliminar carpeta de usuario
-    user_dir = os.path.join(DUMP_DIR, username)
+        raise HTTPException(status_code=401, detail="No autorizado")
+    
+    user_id = user["user_id"]
+    email = user["email"].lower()
+    username = user["username"].lower()
+    
+    # Eliminar clases del usuario PRIMERO
+    products_db_copy = dict(products_db)
+    for item_id, product in products_db_copy.items():
+        if product.owner == user["username"]:
+            try:
+                remove_class_from_disk(user_id, item_id)
+            except Exception as e:
+                print(f"Advertencia al eliminar clase {item_id}: {e}")
+            del products_db[item_id]
+    
+    # Eliminar carpeta del usuario completamente con manejo robusto
+    user_dir = os.path.join(DUMP_DIR, user_id)
     if os.path.isdir(user_dir):
-        shutil.rmtree(user_dir)
-    # eliminar de memory: usuarios y sus clases
-    users_store.pop(username, None)
-    email_index.pop(user["email"], None)
-    # eliminar sesiones del usuario
-    for t, u in list(sessions.items()):
-        if u == username:
-            sessions.pop(t, None)
-    # eliminar clases del products_db que pertenecían al usuario
-    for pid, prod in list(products_db.items()):
-        if prod.owner == username:
-            products_db.pop(pid, None)
-    return {"message": f"Cuenta '{username}' eliminada"}
+        try:
+            import stat
+            import time
+            
+            # Primero intenta eliminación normal
+            try:
+                shutil.rmtree(user_dir)
+            except PermissionError:
+                # Si falla por permisos, cambia permisos recursivamente
+                for root, dirs, files in os.walk(user_dir, topdown=False):
+                    for name in files:
+                        path = os.path.join(root, name)
+                        try:
+                            os.chmod(path, stat.S_IWUSR | stat.S_IRUSR)
+                            os.remove(path)
+                        except Exception as e:
+                            print(f"No se pudo eliminar archivo {path}: {e}")
+                    
+                    for name in dirs:
+                        path = os.path.join(root, name)
+                        try:
+                            os.chmod(path, stat.S_IWUSR | stat.S_IRUSR | stat.S_IXUSR)
+                        except Exception as e:
+                            print(f"No se pudo cambiar permisos de {path}: {e}")
+                
+                # Intenta eliminar directorios después
+                for root, dirs, files in os.walk(user_dir, topdown=False):
+                    for name in dirs:
+                        path = os.path.join(root, name)
+                        try:
+                            os.rmdir(path)
+                        except Exception as e:
+                            print(f"No se pudo eliminar directorio {path}: {e}")
+                
+                # Intenta eliminar la carpeta raíz
+                try:
+                    os.rmdir(user_dir)
+                except Exception as e:
+                    print(f"No se pudo eliminar carpeta raíz {user_dir}: {e}")
+        except Exception as e:
+            print(f"Error al eliminar carpeta {user_dir}: {e}")
+            # Continúa aunque falle la eliminación de carpeta
+    
+    # Eliminar de índices
+    if user_id in users_store:
+        del users_store[user_id]
+    if email in email_index:
+        del email_index[email]
+    if username in username_index:
+        del username_index[username]
+    
+    return {"message": "Cuenta eliminada"}
 
 # ============================================================================
 # PUNTO DE ENTRADA
 # ============================================================================
+
 if __name__ == "__main__":
     import uvicorn
 
-    # Leer configuración desde variables de entorno (o usar valores por defecto)
-    host = os.getenv("HOST", "0.0.0.0")
+    host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8000"))
     reload_env = os.getenv("RELOAD", "true").lower()
     reload_flag = reload_env in ("1", "true", "yes", "y")
 
-    # Ejecutar el servidor con la configuración obtenida
     uvicorn.run(
         "main:app",
         host=host,

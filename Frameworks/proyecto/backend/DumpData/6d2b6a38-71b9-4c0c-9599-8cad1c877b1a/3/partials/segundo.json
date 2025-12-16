@@ -1,0 +1,36 @@
+{
+  "name": "segundo",
+  "max_score": 100,
+  "evaluation_method": "promedio",
+  "activities": [],
+  "vpf": 0,
+  "vpf_max": 100,
+  "penalties": 0,
+  "extras": 0,
+  "categories": {
+    "activities": {
+      "name": "Actividades",
+      "percentage": 20,
+      "score": 0,
+      "count": 0
+    },
+    "attendance": {
+      "name": "Asistencia",
+      "percentage": 10,
+      "score": 0,
+      "count": 0
+    },
+    "projects": {
+      "name": "Proyectos",
+      "percentage": 30,
+      "score": 0,
+      "count": 0
+    },
+    "exams": {
+      "name": "Exámenes",
+      "percentage": 40,
+      "score": 0,
+      "count": 0
+    }
+  }
+}

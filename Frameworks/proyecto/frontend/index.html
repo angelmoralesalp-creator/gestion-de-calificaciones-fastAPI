@@ -7,7 +7,18 @@
     <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-    <button id="themeToggle" class="theme-toggle" aria-label="Alternar tema" title="Alternar tema">🌙</button>
+    <div class="top-bar">
+        <div class="account-menu-wrapper">
+            <button id="accountMenuBtn" class="account-menu-btn" title="Menú de cuenta">👤</button>
+            <div id="accountMenu" class="account-menu hidden">
+                <div class="account-menu-header" id="accountMenuHeader">Cuenta</div>
+                <button id="manageAccount" class="account-menu-item" onclick="window.location.href='manage_account.html'">⚙️ Gestionar</button>
+                <hr style="margin: 0.5rem 0; opacity: 0.3;">
+                <button id="logoutBtn" class="account-menu-item logout">🚪 Cerrar sesión</button>
+            </div>
+        </div>
+        <button id="themeToggle" class="theme-toggle" aria-label="Alternar tema" title="Alternar tema">🌙</button>
+    </div>
 
     <div class="container">
         <header class="app-header">
@@ -15,26 +26,23 @@
                 <h1>Control de Clases</h1>
                 <p class="subtitle">Interfaz para gestionar clases — FastAPI</p>
             </div>
-            <div id="headerRight" class="header-right">
-                <!-- El panel de usuario se inyecta aquí por script.js -->
-            </div>
         </header>
 
         <main class="main-grid">
             <aside class="sidebar">
                 <section id="accountCard" class="card form-account">
-                    <h2>🙂 Cuenta</h2>
+                    <h2>👤 Cuenta</h2>
                     <form id="accountForm" class="form-vertical">
                         <div class="input-group">
-                            <label for="userName">Usuario</label>
-                            <input type="text" id="userName" required placeholder="Nombre de usuario" />
+                            <label for="userName">Usuario (requerido solo para registro)</label>
+                            <input type="text" id="userName" placeholder="Nombre de usuario" />
                         </div>
                         <div class="input-group">
-                            <label for="userMail">Correo</label>
+                            <label for="userMail">Correo *</label>
                             <input type="email" id="userMail" required placeholder="Correo electrónico" />
                         </div>
                         <div class="input-group">
-                            <label for="userPassword">Contraseña</label>
+                            <label for="userPassword">Contraseña *</label>
                             <input type="password" id="userPassword" required placeholder="Contraseña" />
                         </div>
                         <div class="form-actions">
@@ -48,25 +56,25 @@
                     <form id="productForm" class="form-vertical">
                         <div class="input-group">
                             <label for="itemId">ID</label>
-                            <input type="number" id="itemId" required min="1" placeholder="Identificador (ID)" />
+                            <input type="number" id="itemId" min="1" placeholder="Identificador (ID)" />
                         </div>
                         <div class="input-group">
                             <label for="itemName">Nombre de la clase</label>
                             <input type="text" id="itemName" required placeholder="Nombre de la clase" />
                         </div>
 
-                        <div class="input-group">
-                            <label for="itemPartial">Agregar parcial (nombre)</label>
-                            <input type="text" id="itemPartial" placeholder="Nombre del parcial (opcional)" />
-                            <small class="muted">Agrega un parcial y presiona "Agregar parcial"</small>
-                            <div style="margin-top:0.5rem;">
-                                <button type="button" id="addPartialBtn" class="btn btn-secondary btn-sm">Agregar parcial</button>
-                            </div>
-                            <ul id="partialsList" class="partials-list"></ul>
-                        </div>
+                <div class="input-group">
+                    <label>Parciales</label>
+                    <div class="partials-controls">
+                        <input type="text" id="itemPartial" placeholder="Nombre del parcial" />
+                        <button type="button" id="addPartialBtn" class="btn btn-secondary btn-sm">➕ Agregar</button>
+                    </div>
+                    <ul id="partialsList" class="partials-list"></ul>
+                </div>
 
                         <div class="form-actions">
-                            <button type="submit" class="btn btn-primary">Guardar clase</button>
+                            <button type="submit" class="btn btn-primary">💾 Guardar clase</button>
+                            <button type="button" id="cancelEditBtn" class="btn btn-secondary" style="display:none;">❌ Cancelar</button>
                         </div>
                     </form>
                 </section>
@@ -77,65 +85,187 @@
                     <h2>🔍 Buscar Clase</h2>
                     <div class="search-controls">
                         <input type="number" id="searchId" placeholder="ID" min="1" />
-                        <input type="text" id="searchQuery" placeholder="Nombre (Opcional)" />
-                        <div class="search-buttons">
-                            <button type="button" id="searchBtn" class="btn btn-secondary">Buscar</button>
-                            <button type="button" id="verTodosBtn" class="btn btn-info">Ver Mis Clases</button>
-                        </div>
+                        <button type="button" id="searchBtn" class="btn btn-secondary">🔍 Buscar</button>
+                        <button type="button" id="verTodosBtn" class="btn btn-info">📋 Mis Clases</button>
                     </div>
                 </div>
 
                 <div id="resultsCard" class="card results-section hidden">
                     <h2>📚 Clases</h2>
                     <div id="results" class="results-container">
-                        <p class="placeholder">Carga inicial... inicia sesión y pulsa "Ver Mis Clases"</p>
+                        <p class="placeholder">Carga inicial... inicia sesión y pulsa "Mis Clases"</p>
                     </div>
                 </div>
             </section>
         </main>
 
         <footer class="app-footer">
-            <small>Interfaz para gestionar clases — FastAPI - Alpha</small>
+            <small>Interfaz para gestionar clase — Alpha (Sujeto A Cambios)</small>
         </footer>
-    </div>
 
-    <div id="modal" class="modal" aria-hidden="true">
-        <div class="modal-content">
-            <h3 id="modalTitle">Confirmar</h3>
-            <p id="modalMessage">¿Estás seguro?</p>
-            <div class="modal-buttons">
-                <button id="modalConfirm" class="btn btn-danger">Sí</button>
-                <button id="modalCancel" class="btn btn-secondary">Cancelar</button>
+        <!-- Modal de confirmación genérica -->
+        <div id="modal" class="modal hidden" aria-hidden="true">
+            <div class="modal-content">
+                <h3 id="modalTitle">Confirmar</h3>
+                <p id="modalMessage">¿Estás seguro?</p>
+                <div class="modal-buttons">
+                    <button id="modalConfirm" class="btn btn-danger">Sí</button>
+                    <button id="modalCancel" class="btn btn-secondary">Cancelar</button>
+                </div>
             </div>
         </div>
     </div>
 
-    <script src="script.js"></script>
-    <script>
-        // Renderizar clases (sin is_offer en editProduct)
-        function displayProducts(products, title) {
-            let html = `<h3>${title}</h3><div class="products-grid">`;
-            products.forEach(product => {
-                const isOwner = currentUser && product.owner && (currentUser.username === product.owner || currentUser.is_admin);
-                const partialsHtml = (product.partials && product.partials.length) ? `<ul class="partials-list">${product.partials.map(p => `<li>${p.name || 'Parcial'}</li>`).join('')}</ul>` : '';
-                html += `
-                    <div class="product-card">
-                        <div class="product-header">
-                            <h4>${product.name}</h4>
-                            <span class="product-id">ID: ${product.item_id}</span>
-                        </div>
-                        <div class="product-owner">Propietario: ${product.owner || '—'}</div>
-                        ${partialsHtml}
-                        <div class="product-actions">
-                            ${isOwner ? `<button onclick="editProduct(${product.item_id}, '${escapeHtml(product.name)}', ${encodeURIComponent(JSON.stringify(product.partials || []))})" class="btn btn-sm btn-secondary">✏️ Editar</button>` : ''}
-                            ${isOwner ? `<button onclick="deleteProduct(${product.item_id})" class="btn btn-sm btn-danger">🗑️ Eliminar</button>` : ''}
+    <!-- Modal para parciales -->
+    <div id="partialModal" class="modal hidden">
+        <div class="modal-content partial-modal-content">
+            <div class="modal-header">
+                <h3>Editar Parcial</h3>
+                <button type="button" class="modal-close" onclick="closePartialModal()">✕</button>
+            </div>
+            
+            <div class="partial-form">
+                <div class="form-row">
+                    <div class="form-col">
+                        <label for="partialName">Nombre del parcial</label>
+                        <input type="text" id="partialName" placeholder="Ej: Primer parcial" />
+                    </div>
+                    <div class="form-col">
+                        <label for="partialMethod">Método de evaluación</label>
+                        <select id="partialMethod">
+                            <option value="promedio">Promedio</option>
+                            <option value="suma">Suma</option>
+                            <option value="ponderado">Ponderado</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-col">
+                        <label for="partialMaxScore">Calificación máxima</label>
+                        <input type="number" id="partialMaxScore" min="0" value="100" step="0.1" />
+                    </div>
+                    <div class="form-col">
+                        <label for="partialVpfMax">Límite VPF</label>
+                        <input type="number" id="partialVpfMax" min="0" value="100" step="0.1" />
+                    </div>
+                </div>
+
+                <div class="score-display">
+                    <div class="score-item">
+                        <span class="score-label">Promedio calculado:</span>
+                        <span class="score-value" id="partialVpfDisplay">0.00</span>
+                    </div>
+                </div>
+
+                <div class="performance-alert" id="performanceAlert" style="display: none;">
+                    <span id="performanceAlertText"></span>
+                </div>
+
+                <div class="input-group">
+                    <label>📊 Estructura de Calificación (Porcentajes)</label>
+                    <div class="categories-structure">
+                        <div id="categoryItems" class="category-row"></div>
+                        <div style="display:flex; gap:0.5rem; align-items:center; margin-top:0.5rem;">
+                            <button type="button" id="addCategoryBtn" class="btn btn-secondary btn-sm">➕ Agregar categoría</button>
+                            <div class="category-total" style="margin-left:auto;">
+                                <span>Total: <strong id="categoryTotal">100</strong>%</span>
+                            </div>
                         </div>
                     </div>
-                `;
-            });
-            html += '</div>';
-            resultsContainer.innerHTML = html;
-        }
-    </script>
+                </div>
+
+                <div class="input-group">
+                    <label>Penalizaciones y Extras</label>
+                    <div class="penalty-extras-controls">
+                        <input type="number" id="penaltyValue" placeholder="Cantidad" step="0.1" title="Penalización a restar" />
+                        <input type="number" id="extraValue" placeholder="Cantidad" step="0.1" title="Puntos extras a sumar" />
+                        <button type="button" id="addPenaltyBtn" class="btn btn-secondary" title="Agregar penalización">➖</button>
+                        <button type="button" id="addExtraBtn" class="btn btn-secondary" title="Agregar extra">➕</button>
+                    </div>
+                    <div id="penaltyExtrasDisplay" class="penalty-extras-display"></div>
+                </div>
+
+                <div class="input-group">
+                    <label>Comparador de Periodos</label>
+                    <select id="periodComparison" class="period-select">
+                        <option value="none">Sin comparación</option>
+                        <option value="previous">Comparar con periodo anterior</option>
+                        <option value="average">Promedio histórico</option>
+                    </select>
+                    <div id="comparisonResult" class="comparison-result hidden"></div>
+                </div>
+
+                <div class="activities-section">
+                    <h4>Actividades</h4>
+                    <div class="activities-container">
+                        <ul id="partialActivities" class="activities-list"></ul>
+                        <div id="activitiesEmpty" class="activities-empty">No hay actividades aún</div>
+                    </div>
+                    <div id="effortCalcWrapper" class="effort-calc-wrapper">
+                        <button type="button" id="calculateEffortBtn" class="btn btn-secondary btn-sm">🧮 Calcular esfuerzo</button>
+                        <div id="effortResult" class="effort-result" aria-live="polite">&nbsp;</div>
+                    </div>
+                </div>
+
+                <div class="add-activity-section">
+                    <h4>Agregar Actividad</h4>
+                    <div class="activity-form-wrapper">
+                        <div class="activity-input-row">
+                            <div class="activity-input-row-extended">
+                                <div style="display: flex; flex-direction: column; gap: 0.3rem;">
+                                    <label for="activityName" style="font-size: 0.75rem; color: var(--muted); font-weight: 600;">Nombre</label>
+                                    <input type="text" id="activityName" placeholder="Ej: Tarea 1" class="activity-input-name" />
+                                </div><br>
+                                <div style="display: flex; flex-direction: column; gap: 0.3rem;">
+                                    <label for="activityDescription" style="font-size: 0.75rem; color: var(--muted); font-weight: 600;">Descripción</label>
+                                    <textarea id="activityDescription" placeholder="Descripción opcional" class="activity-input-description" rows="2"></textarea>
+                                </div><br>
+                                <div style="display: flex; flex-direction: column; gap: 0.3rem;">
+                                    <label for="activityScore" style="font-size: 0.75rem; color: var(--muted); font-weight: 600;">Calificación</label>
+                                    <input type="number" id="activityScore" class="activity-input-score" placeholder="0 - 100" step="0.1" />
+                                </div><br>
+                                <div style="display: flex; flex-direction: column; gap: 0.3rem;">
+                                    <label for="activityWeight" style="font-size: 0.75rem; color: var(--muted); font-weight: 600;">Peso</label>
+                                    <input type="number" id="activityWeight" class="activity-input-weight" value="1" min="0" step="0.1" />
+                                </div><br>
+                                <div style="display: flex; flex-direction: column; gap: 0.3rem;">
+                                    <label for="activityCategory" style="font-size: 0.75rem; color: var(--muted); font-weight: 600;">Categoría</label>
+                                    <select id="activityCategory" class="activity-input-category">
+                                        <option value="activities">Actividades</option>
+                                        <option value="attendance">Asistencia</option>
+                                        <option value="projects">Proyectos</option>
+                                        <option value="exams">Exámenes</option>
+                                    </select>
+                                </div><br>
+                                <div style="display:flex; align-items:flex-end; gap: 0.5rem;">
+                                    <button type="button" id="addActivityBtn" class="btn btn-primary btn-add-activity">➕ Agregar actividad</button>
+                                    <button type="button" id="cancelEditBtn" class="btn btn-secondary" style="display: none;">❌ Cancelar</button>
+                                </div>
+                                </div>
+                            </div>
+
+                        </div>
+                        <div class="modal-footer" style="display:flex; gap:0.5rem; justify-content:flex-end; padding:0.75rem 1rem;">
+                            <button id="partialModalCancel" class="btn btn-secondary">Cancelar</button>
+                            <button id="partialModalSave" class="btn btn-primary">💾 Guardar</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+    <!-- Pantalla de carga -->
+    <div id="loadingOverlay" class="loading-overlay hidden">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <p>Cargando...</p>
+        </div>
+    </div>
+
+    <script src="Scripts/utils.js"></script>
+    <script src="Scripts/auth.js"></script>
+    <script src="Scripts/partials.js"></script>
+    <script src="Scripts/products.js"></script>
+    <script src="Scripts/main.js"></script>
 </body>
 </html>

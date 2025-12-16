@@ -1,7 +1,7 @@
 
 [Sistemas]:
-Agregar, tachar, eliminar y editar valores [work in progres]
-agrupamiento por Materias
+Agregar, tachar, eliminar y editar valores [✅]
+agrupamiento por Materias [✅]
 Considerar puntos extras y penalizaciones
 comparar periodos
 calculadora de esfuerzo
@@ -9,4 +9,5 @@ Analisis de rendimiento
 Sistema de Cuentas [✅]
 advertencia de Bajo rendimiento
 temas claro/oscuro [✅]
+
 
